@@ -9,8 +9,8 @@
 const WebSocket = require("ws");
 const http = require("http");
 
-// 配置
-const PORT = process.env.PROXY_PORT || 8768;
+// 配置 - Railway 使用 PORT 环境变量
+const PORT = process.env.PORT || process.env.PROXY_PORT || 8768;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "sk-z4a6qvhXCbfboOyBwL33BR66mJdHTKj5NO4pfIUSkLBm2jGF";
 const OPENAI_WS_URL = "wss://api.bltcy.ai/v1/realtime?model=gpt-4o-mini-realtime-preview";
 
