@@ -18,6 +18,7 @@ function InterviewContent() {
   const [currentTranscript, setCurrentTranscript] = useState("");
   const [remainingTime, setRemainingTime] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -25,6 +26,7 @@ function InterviewContent() {
   const playerRef = useRef<AudioPlayer | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const autoRecordingRef = useRef<boolean>(false);
 
   // 解析设置
   useEffect(() => {
@@ -73,6 +75,34 @@ function InterviewContent() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // 自动开始录音
+  const startAutoRecording = useCallback(async () => {
+    if (autoRecordingRef.current || !wsRef.current) return;
+
+    try {
+      autoRecordingRef.current = true;
+      const recorder = new AudioRecorder();
+      recorderRef.current = recorder;
+
+      await recorder.start((audioData) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          const base64Audio = encodeAudioToBase64(audioData);
+          wsRef.current.send(
+            JSON.stringify({
+              type: "input_audio_buffer.append",
+              audio: base64Audio,
+            })
+          );
+        }
+      });
+
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Failed to start auto recording:", err);
+      autoRecordingRef.current = false;
+    }
+  }, []);
+
   // 连接 WebSocket
   const connectWebSocket = useCallback(async () => {
     if (!settings) return;
@@ -92,7 +122,7 @@ function InterviewContent() {
       ws.onopen = () => {
         console.log("WebSocket connected");
 
-        // 发送 session.update
+        // 发送 session.update - 使用 Server VAD 自动检测语音
         const prompt = generateInterviewPrompt({
           mode: settings.mode,
           position: settings.position,
@@ -121,7 +151,7 @@ function InterviewContent() {
               type: "server_vad",
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 500,
+              silence_duration_ms: 800, // 用户停顿 800ms 后认为说完
             },
           },
         };
@@ -139,6 +169,11 @@ function InterviewContent() {
         }, 500);
 
         setStatus("active");
+
+        // 立即开始录音，让 Server VAD 处理
+        setTimeout(() => {
+          startAutoRecording();
+        }, 1000);
       };
 
       ws.onmessage = (event) => {
@@ -167,7 +202,7 @@ function InterviewContent() {
       setError("连接失败，请检查网络");
       setStatus("idle");
     }
-  }, [settings]);
+  }, [settings, startAutoRecording]);
 
   // 处理服务器消息
   const handleServerMessage = (data: any) => {
@@ -178,14 +213,14 @@ function InterviewContent() {
         break;
 
       case "response.audio.delta":
-        // 播放音频
+        // AI 正在说话
+        setIsAISpeaking(true);
         if (data.delta && playerRef.current) {
           playerRef.current.play(data.delta);
         }
         break;
 
       case "response.audio_transcript.delta":
-        // 更新 AI 正在说的内容
         setCurrentTranscript((prev) => prev + (data.delta || ""));
         break;
 
@@ -203,8 +238,23 @@ function InterviewContent() {
         }
         break;
 
+      case "response.done":
+        // AI 完全说完，可以开始录音
+        setIsAISpeaking(false);
+        break;
+
+      case "input_audio_buffer.speech_started":
+        // 用户开始说话（VAD 检测到）
+        setIsRecording(true);
+        break;
+
+      case "input_audio_buffer.speech_stopped":
+        // 用户停止说话（VAD 检测到）
+        setIsRecording(false);
+        break;
+
       case "conversation.item.input_audio_transcription.completed":
-        // 用户说完话
+        // 用户说完话，转录完成
         if (data.transcript) {
           const newMessage: Message = {
             id: Date.now().toString(),
@@ -225,44 +275,6 @@ function InterviewContent() {
     }
   };
 
-  // 开始/停止录音
-  const toggleRecording = async () => {
-    if (isRecording) {
-      // 停止录音
-      recorderRef.current?.stop();
-      recorderRef.current = null;
-      setIsRecording(false);
-
-      // 通知服务器用户说完了
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-      }
-    } else {
-      // 开始录音
-      try {
-        const recorder = new AudioRecorder();
-        recorderRef.current = recorder;
-
-        await recorder.start((audioData) => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            const base64Audio = encodeAudioToBase64(audioData);
-            wsRef.current.send(
-              JSON.stringify({
-                type: "input_audio_buffer.append",
-                audio: base64Audio,
-              })
-            );
-          }
-        });
-
-        setIsRecording(true);
-      } catch (err) {
-        console.error("Failed to start recording:", err);
-        setError("无法访问麦克风，请检查权限");
-      }
-    }
-  };
-
   // 结束面试
   const endInterview = useCallback(() => {
     setStatus("ending");
@@ -272,6 +284,7 @@ function InterviewContent() {
       recorderRef.current.stop();
       recorderRef.current = null;
     }
+    autoRecordingRef.current = false;
     setIsRecording(false);
 
     // 停止计时器
@@ -303,9 +316,22 @@ function InterviewContent() {
   // 获取标题
   const getTitle = () => {
     if (!settings) return "面试进行中";
+
+    const modeNames: Record<string, string> = {
+      civil: "公务员面试",
+      behavioral: "行为面试",
+      internet: "互联网面试",
+      resume: "简历面试",
+      tech: "技术面试",
+    };
+
     const parts = [];
     if (settings.company) parts.push(settings.company);
     if (settings.position) parts.push(settings.position);
+    if (settings.mode && !settings.company && !settings.position) {
+      parts.push(modeNames[settings.mode] || "模拟面试");
+    }
+
     if (settings.round) {
       const roundNames: Record<string, string> = {
         hr: "HR面",
@@ -315,38 +341,66 @@ function InterviewContent() {
       };
       parts.push(roundNames[settings.round] || "");
     }
+
     return parts.join(" · ") || "面试进行中";
   };
 
   if (!settings) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">加载中...</p>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">加载中...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <main className="min-h-screen flex flex-col">
+    <main className="min-h-screen flex flex-col bg-background">
       {/* 顶部栏 */}
-      <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-        <div className="text-sm text-foreground font-medium">{getTitle()}</div>
-        <div className="text-sm text-muted-foreground">{formatTime(remainingTime)}</div>
+      <div className="border-b border-border/50 bg-card/50 backdrop-blur-md px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <div className="text-sm text-foreground font-medium">{getTitle()}</div>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="text-2xl font-mono text-primary font-bold">
+            {formatTime(remainingTime)}
+          </div>
+        </div>
       </div>
 
       {/* 对话区域 */}
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-2xl mx-auto space-y-4">
+          {messages.length === 0 && status === "active" && (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                <div className="flex gap-1">
+                  {[...Array(5)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="w-1 bg-primary rounded-full wave-bar"
+                      style={{ animationDelay: `${i * 0.1}s` }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <p className="text-muted-foreground">面试官正在准备问题...</p>
+            </div>
+          )}
+
           {messages.map((msg) => (
             <div
               key={msg.id}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[80%] px-4 py-3 rounded-lg text-sm ${
+                className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm ${
                   msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground"
+                    ? "bg-primary text-primary-foreground rounded-br-md"
+                    : "bg-card border border-border rounded-bl-md"
                 }`}
               >
                 {msg.content}
@@ -354,12 +408,12 @@ function InterviewContent() {
             </div>
           ))}
 
-          {/* 当前正在说的内容 */}
+          {/* AI 正在说的内容 */}
           {currentTranscript && (
             <div className="flex justify-start">
-              <div className="max-w-[80%] px-4 py-3 rounded-lg text-sm bg-muted text-foreground">
+              <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-bl-md text-sm bg-card border border-border">
                 {currentTranscript}
-                <span className="animate-pulse">▊</span>
+                <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse" />
               </div>
             </div>
           )}
@@ -369,55 +423,90 @@ function InterviewContent() {
       </div>
 
       {/* 底部控制区 */}
-      <div className="border-t border-border px-4 py-4">
+      <div className="border-t border-border/50 bg-card/50 backdrop-blur-md px-4 py-6">
         {error && (
-          <div className="text-center text-destructive text-sm mb-4">{error}</div>
+          <div className="max-w-2xl mx-auto mb-4">
+            <div className="text-center text-destructive text-sm bg-destructive/10 rounded-lg py-2 px-4">
+              {error}
+            </div>
+          </div>
         )}
 
         <div className="max-w-2xl mx-auto">
           {status === "idle" && (
-            <Button onClick={connectWebSocket} className="w-full">
+            <Button
+              onClick={connectWebSocket}
+              className="w-full btn-gradient py-6 text-lg rounded-xl"
+            >
               开始面试
             </Button>
           )}
 
           {status === "connecting" && (
-            <div className="text-center text-muted-foreground">连接中...</div>
-          )}
-
-          {status === "active" && (
-            <div className="flex items-center justify-center gap-4">
-              <Button
-                variant="outline"
-                onClick={endInterview}
-                className="text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
-              >
-                结束面试
-              </Button>
-
-              <button
-                onClick={toggleRecording}
-                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${
-                  isRecording
-                    ? "bg-destructive text-destructive-foreground scale-110"
-                    : "bg-primary text-primary-foreground hover:scale-105"
-                }`}
-              >
-                <div className={`w-6 h-6 ${isRecording ? "rounded-sm" : "rounded-full"} bg-current`} />
-              </button>
-
-              <div className="w-[88px]" /> {/* 占位，保持居中 */}
+            <div className="text-center">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-muted-foreground">正在连接面试官...</p>
             </div>
           )}
 
           {status === "active" && (
-            <p className="text-center text-muted-foreground text-xs mt-3">
-              {isRecording ? "松开停止说话" : "点击开始回答"}
-            </p>
+            <div className="flex flex-col items-center gap-6">
+              {/* 语音状态指示器 */}
+              <div className="flex items-center gap-4">
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${
+                  isAISpeaking
+                    ? "bg-primary/20 text-primary"
+                    : isRecording
+                    ? "bg-green-500/20 text-green-500"
+                    : "bg-muted text-muted-foreground"
+                }`}>
+                  {isAISpeaking ? (
+                    <>
+                      <div className="flex gap-0.5">
+                        {[...Array(4)].map((_, i) => (
+                          <div
+                            key={i}
+                            className="w-1 bg-primary rounded-full wave-bar"
+                            style={{ animationDelay: `${i * 0.1}s` }}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-sm">面试官正在说话</span>
+                    </>
+                  ) : isRecording ? (
+                    <>
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                      <span className="text-sm">正在录音中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-2 h-2 rounded-full bg-muted-foreground" />
+                      <span className="text-sm">等待发言</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* 结束按钮 */}
+              <Button
+                variant="outline"
+                onClick={endInterview}
+                className="px-8 py-3 text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground rounded-xl"
+              >
+                结束面试
+              </Button>
+
+              <p className="text-muted-foreground text-xs text-center">
+                直接开始说话即可，AI 会自动检测你的发言
+              </p>
+            </div>
           )}
 
           {status === "ending" && (
-            <div className="text-center text-muted-foreground">正在生成面试报告...</div>
+            <div className="text-center">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-muted-foreground">正在生成面试报告...</p>
+            </div>
           )}
         </div>
       </div>
@@ -427,7 +516,14 @@ function InterviewContent() {
 
 export default function InterviewPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">加载中...</div>}>
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">加载中...</p>
+        </div>
+      </div>
+    }>
       <InterviewContent />
     </Suspense>
   );
