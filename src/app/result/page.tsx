@@ -3,7 +3,6 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import type { Message, InterviewResult, InterviewSettings } from "@/types";
 
 function ResultContent() {
@@ -40,12 +39,14 @@ function ResultContent() {
       setResult({
         totalScore: 0,
         dimensions: [
-          { name: "表达清晰度", score: 0 },
-          { name: "逻辑结构", score: 0 },
-          { name: "专业深度", score: 0 },
-          { name: "应变能力", score: 0 },
+          { name: "表达清晰度", score: 0, comment: "没有对话记录" },
+          { name: "逻辑结构", score: 0, comment: "没有对话记录" },
+          { name: "专业深度", score: 0, comment: "没有对话记录" },
+          { name: "应变能力", score: 0, comment: "没有对话记录" },
         ],
         suggestions: ["面试对话过短，无法生成有效评估"],
+        highlights: [],
+        overallComment: "这场面试几乎没有对话内容，请确保麦克风正常工作后重试。",
         transcript: msgs,
       });
       setLoading(false);
@@ -75,18 +76,20 @@ function ResultContent() {
     } catch (err) {
       console.error("Failed to generate report:", err);
       setResult({
-        totalScore: 70,
+        totalScore: 50,
         dimensions: [
-          { name: "表达清晰度", score: 70 },
-          { name: "逻辑结构", score: 65 },
-          { name: "专业深度", score: 70 },
-          { name: "应变能力", score: 68 },
+          { name: "表达清晰度", score: 50, comment: "评估系统出错，这是临时分数" },
+          { name: "逻辑结构", score: 45, comment: "评估系统出错，这是临时分数" },
+          { name: "专业深度", score: 50, comment: "评估系统出错，这是临时分数" },
+          { name: "应变能力", score: 47, comment: "评估系统出错，这是临时分数" },
         ],
         suggestions: [
-          "建议使用STAR法则组织回答",
-          "回答可以加入更多具体数据支撑",
-          "注意控制回答时长，避免过于简短或冗长",
+          "🎯 评估系统暂时出了点问题",
+          "🎯 建议稍后再试一次",
+          "🎯 你可以先回顾一下对话记录自我评估",
         ],
+        highlights: [],
+        overallComment: "抱歉，AI评估系统出了点问题 😅 但你的练习记录已保存，可以查看对话记录进行自我复盘！",
         transcript: msgs,
       });
     } finally {
@@ -97,21 +100,25 @@ function ResultContent() {
   const getScoreColor = (score: number) => {
     if (score >= 80) return "text-green-400";
     if (score >= 60) return "text-yellow-400";
+    if (score >= 40) return "text-orange-400";
     return "text-red-400";
   };
 
   const getScoreGradient = (score: number) => {
     if (score >= 80) return "from-green-500 to-emerald-400";
     if (score >= 60) return "from-yellow-500 to-orange-400";
+    if (score >= 40) return "from-orange-500 to-red-400";
     return "from-red-500 to-rose-400";
   };
 
   const getScoreLabel = (score: number) => {
-    if (score >= 90) return "优秀";
-    if (score >= 80) return "良好";
-    if (score >= 70) return "中等";
-    if (score >= 60) return "及格";
-    return "需改进";
+    if (score >= 90) return "顶级表现 🌟";
+    if (score >= 80) return "表现良好 👍";
+    if (score >= 70) return "中等偏上";
+    if (score >= 60) return "及格水平";
+    if (score >= 40) return "需要加油 💪";
+    if (score >= 20) return "差强人意 😅";
+    return "emm...加油吧";
   };
 
   if (loading) {
@@ -125,7 +132,7 @@ function ResultContent() {
             <div className="absolute inset-2 border-4 border-cyan-400 border-b-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
           </div>
           <p className="text-lg font-medium mb-2">AI 正在分析你的面试表现</p>
-          <p className="text-sm text-muted-foreground">生成个性化评估报告中...</p>
+          <p className="text-sm text-muted-foreground">正在生成真实、客观的评估报告...</p>
         </div>
       </main>
     );
@@ -164,7 +171,7 @@ function ResultContent() {
             <span className="text-gradient">面试评估报告</span>
           </h1>
           <p className="text-muted-foreground">
-            基于 AI 深度分析的个性化评估结果
+            基于 AI 深度分析 · 真实客观评价
           </p>
         </div>
 
@@ -183,6 +190,7 @@ function ResultContent() {
               <div className={`inline-flex items-center gap-1 mt-2 px-3 py-1 rounded-full text-sm ${
                 totalScore >= 80 ? "bg-green-500/20 text-green-400" :
                 totalScore >= 60 ? "bg-yellow-500/20 text-yellow-400" :
+                totalScore >= 40 ? "bg-orange-500/20 text-orange-400" :
                 "bg-red-500/20 text-red-400"
               }`}>
                 <span className="w-2 h-2 rounded-full bg-current" />
@@ -213,8 +221,8 @@ function ResultContent() {
                 />
                 <defs>
                   <linearGradient id="scoreGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#3b82f6" />
-                    <stop offset="100%" stopColor="#06b6d4" />
+                    <stop offset="0%" stopColor={totalScore >= 60 ? "#22c55e" : "#ef4444"} />
+                    <stop offset="100%" stopColor={totalScore >= 60 ? "#06b6d4" : "#f97316"} />
                   </linearGradient>
                 </defs>
               </svg>
@@ -225,6 +233,39 @@ function ResultContent() {
           </div>
         </div>
 
+        {/* 总评 */}
+        {result?.overallComment && (
+          <div className="card-gradient rounded-2xl p-6 mb-6">
+            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+              </svg>
+              AI 总评
+            </h2>
+            <p className="text-muted-foreground leading-relaxed">{result.overallComment}</p>
+          </div>
+        )}
+
+        {/* 亮点 */}
+        {result?.highlights && result.highlights.length > 0 && (
+          <div className="card-gradient rounded-2xl p-6 mb-6">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+              </svg>
+              表现亮点
+            </h2>
+            <div className="space-y-2">
+              {result.highlights.map((highlight, index) => (
+                <div key={index} className="flex gap-2 items-start">
+                  <span className="text-green-400">✓</span>
+                  <p className="text-sm text-muted-foreground">{highlight}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 维度评分 */}
         <div className="card-gradient rounded-2xl p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -233,20 +274,22 @@ function ResultContent() {
             </svg>
             能力维度分析
           </h2>
-          <div className="space-y-4">
+          <div className="space-y-5">
             {result?.dimensions.map((dim, index) => (
               <div key={dim.name} className="group">
-                <div className="flex justify-between text-sm mb-2">
+                <div className="flex justify-between text-sm mb-1">
                   <span className="text-foreground font-medium">{dim.name}</span>
                   <span className={`font-semibold ${getScoreColor(dim.score)}`}>{dim.score}分</span>
                 </div>
-                <div className="relative h-3 bg-muted/30 rounded-full overflow-hidden">
+                <div className="relative h-3 bg-muted/30 rounded-full overflow-hidden mb-2">
                   <div
                     className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${getScoreGradient(dim.score)} transition-all duration-1000`}
                     style={{ width: `${dim.score}%`, transitionDelay: `${index * 100}ms` }}
                   />
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
                 </div>
+                {dim.comment && (
+                  <p className="text-xs text-muted-foreground pl-1">{dim.comment}</p>
+                )}
               </div>
             ))}
           </div>
@@ -258,14 +301,11 @@ function ResultContent() {
             <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
             </svg>
-            AI 改进建议
+            具体改进建议
           </h2>
           <div className="space-y-3">
             {result?.suggestions.map((suggestion, index) => (
-              <div key={index} className="flex gap-3 p-3 bg-muted/20 rounded-xl hover:bg-muted/30 transition-colors">
-                <div className="flex-shrink-0 w-6 h-6 bg-primary/20 rounded-full flex items-center justify-center text-primary text-sm font-medium">
-                  {index + 1}
-                </div>
+              <div key={index} className="p-4 bg-muted/20 rounded-xl hover:bg-muted/30 transition-colors">
                 <p className="text-sm text-muted-foreground leading-relaxed">{suggestion}</p>
               </div>
             ))}
@@ -413,7 +453,7 @@ function ResultContent() {
         {/* 底部提示 */}
         <div className="mt-8 text-center">
           <p className="text-sm text-muted-foreground">
-            坚持练习，每一次面试都是成长的机会 💪
+            真诚的批评是最好的帮助，每一次练习都让你更接近目标 💪
           </p>
         </div>
       </div>

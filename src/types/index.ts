@@ -24,8 +24,11 @@ export interface InterviewResult {
   dimensions: {
     name: string;
     score: number;
+    comment?: string;
   }[];
   suggestions: string[];
+  highlights?: string[];
+  overallComment?: string;
   transcript: Message[];
 }
 
