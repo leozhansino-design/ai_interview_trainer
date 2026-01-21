@@ -26,7 +26,6 @@ function InterviewContent() {
   const playerRef = useRef<AudioPlayer | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const autoRecordingRef = useRef<boolean>(false);
 
   // 解析设置
   useEffect(() => {
@@ -75,12 +74,11 @@ function InterviewContent() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // 自动开始录音
-  const startAutoRecording = useCallback(async () => {
-    if (autoRecordingRef.current || !wsRef.current) return;
+  // 手动开始录音
+  const startRecording = useCallback(async () => {
+    if (isRecording || !wsRef.current || isAISpeaking) return;
 
     try {
-      autoRecordingRef.current = true;
       const recorder = new AudioRecorder();
       recorderRef.current = recorder;
 
@@ -98,10 +96,35 @@ function InterviewContent() {
 
       setIsRecording(true);
     } catch (err) {
-      console.error("Failed to start auto recording:", err);
-      autoRecordingRef.current = false;
+      console.error("Failed to start recording:", err);
+      setError("无法启动麦克风，请检查权限");
     }
-  }, []);
+  }, [isRecording, isAISpeaking]);
+
+  // 手动停止录音并提交
+  const stopRecording = useCallback(() => {
+    if (!isRecording || !wsRef.current) return;
+
+    // 停止录音
+    if (recorderRef.current) {
+      recorderRef.current.stop();
+      recorderRef.current = null;
+    }
+    setIsRecording(false);
+
+    // 提交音频缓冲区
+    wsRef.current.send(JSON.stringify({
+      type: "input_audio_buffer.commit",
+    }));
+
+    // 触发 AI 回复
+    wsRef.current.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+      },
+    }));
+  }, [isRecording]);
 
   // 连接 WebSocket
   const connectWebSocket = useCallback(async () => {
@@ -147,12 +170,7 @@ function InterviewContent() {
             input_audio_format: "pcm16",
             output_audio_format: "pcm16",
             input_audio_transcription: { model: "whisper-1" },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 800, // 用户停顿 800ms 后认为说完
-            },
+            turn_detection: null, // 手动模式，不使用自动语音检测
           },
         };
 
@@ -169,11 +187,6 @@ function InterviewContent() {
         }, 500);
 
         setStatus("active");
-
-        // 立即开始录音，让 Server VAD 处理
-        setTimeout(() => {
-          startAutoRecording();
-        }, 1000);
       };
 
       ws.onmessage = (event) => {
@@ -202,7 +215,7 @@ function InterviewContent() {
       setError("连接失败，请检查网络");
       setStatus("idle");
     }
-  }, [settings, startAutoRecording]);
+  }, [settings]);
 
   // 处理服务器消息
   const handleServerMessage = (data: any) => {
@@ -243,16 +256,6 @@ function InterviewContent() {
         setIsAISpeaking(false);
         break;
 
-      case "input_audio_buffer.speech_started":
-        // 用户开始说话（VAD 检测到）
-        setIsRecording(true);
-        break;
-
-      case "input_audio_buffer.speech_stopped":
-        // 用户停止说话（VAD 检测到）
-        setIsRecording(false);
-        break;
-
       case "conversation.item.input_audio_transcription.completed":
         // 用户说完话，转录完成
         if (data.transcript) {
@@ -284,7 +287,6 @@ function InterviewContent() {
       recorderRef.current.stop();
       recorderRef.current = null;
     }
-    autoRecordingRef.current = false;
     setIsRecording(false);
 
     // 停止计时器
@@ -451,53 +453,60 @@ function InterviewContent() {
 
           {status === "active" && (
             <div className="flex flex-col items-center gap-6">
-              {/* 语音状态指示器 */}
-              <div className="flex items-center gap-4">
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${
-                  isAISpeaking
-                    ? "bg-primary/20 text-primary"
-                    : isRecording
-                    ? "bg-green-500/20 text-green-500"
-                    : "bg-muted text-muted-foreground"
-                }`}>
-                  {isAISpeaking ? (
-                    <>
-                      <div className="flex gap-0.5">
-                        {[...Array(4)].map((_, i) => (
-                          <div
-                            key={i}
-                            className="w-1 bg-primary rounded-full wave-bar"
-                            style={{ animationDelay: `${i * 0.1}s` }}
-                          />
-                        ))}
-                      </div>
-                      <span className="text-sm">面试官正在说话</span>
-                    </>
-                  ) : isRecording ? (
-                    <>
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                      <span className="text-sm">正在录音中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-2 h-2 rounded-full bg-muted-foreground" />
-                      <span className="text-sm">等待发言</span>
-                    </>
-                  )}
+              {/* 状态提示 */}
+              {isAISpeaking && (
+                <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-primary/20 text-primary">
+                  <div className="flex gap-0.5">
+                    {[...Array(4)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="w-1 bg-primary rounded-full wave-bar"
+                        style={{ animationDelay: `${i * 0.1}s` }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-sm">面试官正在说话...</span>
                 </div>
+              )}
+
+              {/* 录音控制按钮 */}
+              <div className="flex items-center gap-4">
+                {!isRecording ? (
+                  <Button
+                    onClick={startRecording}
+                    disabled={isAISpeaking}
+                    className="px-8 py-6 text-lg rounded-xl btn-gradient disabled:opacity-50"
+                  >
+                    🎤 点击开始回答
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={stopRecording}
+                    className="px-8 py-6 text-lg rounded-xl bg-green-600 hover:bg-green-700 text-white animate-pulse"
+                  >
+                    ⏹️ 点击结束回答
+                  </Button>
+                )}
               </div>
 
-              {/* 结束按钮 */}
+              {isRecording && (
+                <div className="flex items-center gap-2 text-green-500">
+                  <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+                  <span className="text-sm">正在录音中，说完请点击上方按钮</span>
+                </div>
+              )}
+
+              {/* 结束面试按钮 */}
               <Button
                 variant="outline"
                 onClick={endInterview}
-                className="px-8 py-3 text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground rounded-xl"
+                className="px-6 py-2 text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground rounded-xl"
               >
                 结束面试
               </Button>
 
               <p className="text-muted-foreground text-xs text-center">
-                直接开始说话即可，AI 会自动检测你的发言
+                点击"开始回答"后说话，说完点击"结束回答"
               </p>
             </div>
           )}
