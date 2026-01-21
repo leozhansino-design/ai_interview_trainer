@@ -26,6 +26,8 @@ function InterviewContent() {
   const playerRef = useRef<AudioPlayer | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const remainingTimeRef = useRef<number>(0); // 用于在回调中访问剩余时间
+  const startRecordingRef = useRef<() => void>(() => {}); // 用于在消息处理中调用
 
   // 解析设置
   useEffect(() => {
@@ -45,6 +47,11 @@ function InterviewContent() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentTranscript]);
+
+  // 同步 remainingTime 到 ref
+  useEffect(() => {
+    remainingTimeRef.current = remainingTime;
+  }, [remainingTime]);
 
   // 倒计时
   useEffect(() => {
@@ -76,7 +83,12 @@ function InterviewContent() {
 
   // 手动开始录音
   const startRecording = useCallback(async () => {
-    if (isRecording || !wsRef.current || isAISpeaking) return;
+    if (isRecording || !wsRef.current || isAISpeaking) {
+      console.log("[录音] 无法开始录音:", { isRecording, isAISpeaking, hasWs: !!wsRef.current });
+      return;
+    }
+
+    console.log("[录音] 开始录音...");
 
     try {
       const recorder = new AudioRecorder();
@@ -91,19 +103,28 @@ function InterviewContent() {
               audio: base64Audio,
             })
           );
+          // 不要每帧都打印，太多了
         }
       });
 
       setIsRecording(true);
+      console.log("[录音] 录音已开始");
     } catch (err) {
-      console.error("Failed to start recording:", err);
+      console.error("[录音] 启动失败:", err);
       setError("无法启动麦克风，请检查权限");
     }
   }, [isRecording, isAISpeaking]);
 
+  // 同步 startRecording 到 ref，以便在消息处理中调用
+  useEffect(() => {
+    startRecordingRef.current = startRecording;
+  }, [startRecording]);
+
   // 手动停止录音并提交
   const stopRecording = useCallback(() => {
     if (!isRecording || !wsRef.current) return;
+
+    console.log("[录音] 停止录音并提交");
 
     // 停止录音
     if (recorderRef.current) {
@@ -113,17 +134,25 @@ function InterviewContent() {
     setIsRecording(false);
 
     // 提交音频缓冲区
-    wsRef.current.send(JSON.stringify({
-      type: "input_audio_buffer.commit",
-    }));
+    const commitMsg = { type: "input_audio_buffer.commit" };
+    console.log("[发送]", commitMsg);
+    wsRef.current.send(JSON.stringify(commitMsg));
 
-    // 触发 AI 回复
-    wsRef.current.send(JSON.stringify({
+    // 计算剩余时间信息
+    const mins = Math.floor(remainingTimeRef.current / 60);
+    const secs = remainingTimeRef.current % 60;
+    const timeInfo = `[系统提示：面试剩余时间 ${mins}分${secs}秒，请根据时间调整问题深度和数量]`;
+
+    // 触发 AI 回复，附带时间信息
+    const responseMsg = {
       type: "response.create",
       response: {
         modalities: ["audio", "text"],
+        instructions: timeInfo, // 告诉AI当前剩余时间
       },
-    }));
+    };
+    console.log("[发送]", responseMsg);
+    wsRef.current.send(JSON.stringify(responseMsg));
   }, [isRecording]);
 
   // 连接 WebSocket
@@ -143,9 +172,9 @@ function InterviewContent() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("WebSocket connected");
+        console.log("[WebSocket] 已连接");
 
-        // 发送 session.update - 使用 Server VAD 自动检测语音
+        // 发送 session.update
         const prompt = generateInterviewPrompt({
           mode: settings.mode,
           position: settings.position,
@@ -174,16 +203,20 @@ function InterviewContent() {
           },
         };
 
+        console.log("[发送] session.update", { voice, promptLength: prompt.length });
+        console.log("[System Prompt]", prompt);
         ws.send(JSON.stringify(sessionUpdate));
 
         // 触发 AI 开场白
         setTimeout(() => {
-          ws.send(JSON.stringify({
+          const responseCreate = {
             type: "response.create",
             response: {
               modalities: ["audio", "text"],
             },
-          }));
+          };
+          console.log("[发送]", responseCreate);
+          ws.send(JSON.stringify(responseCreate));
         }, 500);
 
         setStatus("active");
@@ -219,14 +252,22 @@ function InterviewContent() {
 
   // 处理服务器消息
   const handleServerMessage = (data: any) => {
+    // 详细日志 - 除了音频数据外都打印
+    if (data.type !== "response.audio.delta" && data.type !== "input_audio_buffer.speech_started" && data.type !== "input_audio_buffer.speech_stopped") {
+      console.log("[收到]", data.type, data);
+    }
+
     switch (data.type) {
       case "session.created":
+        console.log("[会话] 已创建", data.session?.id);
+        break;
+
       case "session.updated":
-        console.log("Session ready");
+        console.log("[会话] 已更新");
         break;
 
       case "response.audio.delta":
-        // AI 正在说话
+        // AI 正在说话 - 不打印每帧
         setIsAISpeaking(true);
         if (data.delta && playerRef.current) {
           playerRef.current.play(data.delta);
@@ -239,6 +280,7 @@ function InterviewContent() {
 
       case "response.audio_transcript.done":
         // AI 说完一句话
+        console.log("[AI说完]", data.transcript);
         if (data.transcript) {
           const newMessage: Message = {
             id: Date.now().toString(),
@@ -252,12 +294,18 @@ function InterviewContent() {
         break;
 
       case "response.done":
-        // AI 完全说完，可以开始录音
+        // AI 完全说完，自动开始录音
+        console.log("[AI回复完成] 自动开始录音...");
         setIsAISpeaking(false);
+        // 延迟一点开始录音，确保状态已更新
+        setTimeout(() => {
+          startRecordingRef.current();
+        }, 300);
         break;
 
       case "conversation.item.input_audio_transcription.completed":
         // 用户说完话，转录完成
+        console.log("[用户说完]", data.transcript);
         if (data.transcript) {
           const newMessage: Message = {
             id: Date.now().toString(),
@@ -269,12 +317,32 @@ function InterviewContent() {
         }
         break;
 
+      case "rate_limits.updated":
+        console.log("[费率限制]", data.rate_limits);
+        break;
+
+      case "response.created":
+        console.log("[AI开始生成回复]");
+        break;
+
+      case "response.output_item.added":
+        console.log("[AI输出项添加]");
+        break;
+
+      case "conversation.item.created":
+        console.log("[对话项创建]", data.item?.type);
+        break;
+
       case "error":
-        console.error("Server error:", data.error);
+        console.error("[错误]", data.error);
         if (data.error?.message) {
           setError(data.error.message);
         }
         break;
+
+      default:
+        // 其他未处理的消息类型也打印出来
+        console.log("[其他消息]", data.type);
     }
   };
 
@@ -477,14 +545,14 @@ function InterviewContent() {
                     disabled={isAISpeaking}
                     className="px-8 py-6 text-lg rounded-xl btn-gradient disabled:opacity-50"
                   >
-                    🎤 点击开始回答
+                    {isAISpeaking ? "⏳ 等待面试官说完..." : "🎤 点击开始回答"}
                   </Button>
                 ) : (
                   <Button
                     onClick={stopRecording}
                     className="px-8 py-6 text-lg rounded-xl bg-green-600 hover:bg-green-700 text-white animate-pulse"
                   >
-                    ⏹️ 点击结束回答
+                    ✅ 回答完毕
                   </Button>
                 )}
               </div>
@@ -492,7 +560,13 @@ function InterviewContent() {
               {isRecording && (
                 <div className="flex items-center gap-2 text-green-500">
                   <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-sm">正在录音中，说完请点击上方按钮</span>
+                  <span className="text-sm">正在录音... 说完请点击"回答完毕"</span>
+                </div>
+              )}
+
+              {!isRecording && !isAISpeaking && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="text-sm">AI说完后会自动开始录音，你也可以手动点击开始</span>
                 </div>
               )}
 
@@ -504,10 +578,6 @@ function InterviewContent() {
               >
                 结束面试
               </Button>
-
-              <p className="text-muted-foreground text-xs text-center">
-                点击"开始回答"后说话，说完点击"结束回答"
-              </p>
             </div>
           )}
 
