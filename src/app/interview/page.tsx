@@ -488,7 +488,7 @@ function InterviewContent() {
       {/* 顶部栏 */}
       <div className="border-b border-border/50 bg-card/50 backdrop-blur-md px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <div className={`w-2 h-2 rounded-full ${status === "active" ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
           <div className="text-sm text-foreground font-medium">{getTitle()}</div>
         </div>
         <div className="flex items-center gap-4">
@@ -498,25 +498,112 @@ function InterviewContent() {
         </div>
       </div>
 
-      {/* 对话区域 */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="max-w-2xl mx-auto space-y-4">
-          {messages.length === 0 && status === "active" && (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                <div className="flex gap-1">
+      {/* 面试准备界面 - idle状态 */}
+      {status === "idle" && (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="max-w-md w-full text-center space-y-8">
+            {/* AI面试官头像 */}
+            <div className="relative mx-auto w-24 h-24">
+              <div className="absolute inset-0 rounded-full bg-blue-500/20 scale-150 animate-pulse" />
+              <div className="absolute inset-0 rounded-full bg-blue-500/10 scale-[1.8]" />
+              <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                <div className="flex items-center justify-center gap-1">
                   {[...Array(5)].map((_, i) => (
                     <div
                       key={i}
-                      className="w-1 bg-primary rounded-full wave-bar"
-                      style={{ animationDelay: `${i * 0.1}s` }}
+                      className="w-1 bg-white rounded-full"
+                      style={{
+                        height: i === 2 ? '28px' : i === 1 || i === 3 ? '20px' : '12px',
+                      }}
                     />
                   ))}
                 </div>
               </div>
-              <p className="text-muted-foreground">面试官正在准备问题...</p>
             </div>
-          )}
+
+            {/* 标题 */}
+            <div>
+              <h2 className="text-2xl font-bold text-foreground mb-2">AI 面试官已就绪</h2>
+              <p className="text-muted-foreground">准备好开始你的模拟面试了吗？</p>
+            </div>
+
+            {/* 面试信息卡片 */}
+            <div className="bg-card/50 border border-border rounded-xl p-4 text-left space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">面试类型</span>
+                <span className="text-foreground font-medium">{getTitle()}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">面试时长</span>
+                <span className="text-foreground font-medium">{settings?.duration} 分钟</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">面试风格</span>
+                <span className="text-foreground font-medium">
+                  {settings?.round === "pressure" ? "压力面试" :
+                   settings?.round === "business" ? "业务面试" :
+                   settings?.round === "hr" ? "HR面试" : "专业面试"}
+                </span>
+              </div>
+            </div>
+
+            {/* 准备提示 */}
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>📍 请确保环境安静，方便语音交流</p>
+              <p>🎤 需要麦克风权限进行语音对话</p>
+              <p>⏱️ 面试开始后将自动计时</p>
+            </div>
+
+            {/* 错误提示 */}
+            {error && (
+              <div className="text-destructive text-sm bg-destructive/10 rounded-lg py-3 px-4">
+                {error}
+              </div>
+            )}
+
+            {/* 开始按钮 */}
+            <Button
+              onClick={connectWebSocket}
+              className="w-full btn-gradient py-6 text-lg rounded-xl"
+            >
+              开始面试
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 连接中状态 */}
+      {status === "connecting" && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-muted-foreground">正在连接面试官...</p>
+          </div>
+        </div>
+      )}
+
+      {/* 面试进行中 */}
+      {status === "active" && (
+        <>
+          {/* 对话区域 */}
+          <div className="flex-1 overflow-y-auto px-4 py-6">
+            <div className="max-w-2xl mx-auto space-y-4">
+              {messages.length === 0 && (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                    <div className="flex gap-1">
+                      {[...Array(5)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-1 bg-primary rounded-full wave-bar"
+                          style={{ animationDelay: `${i * 0.1}s` }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-muted-foreground">面试官正在准备问题...</p>
+                </div>
+              )}
 
           {messages.map((msg) => (
             <div
@@ -593,107 +680,86 @@ function InterviewContent() {
             </div>
           )}
 
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* 底部控制区 */}
-      <div className="border-t border-border/50 bg-card/50 backdrop-blur-md px-4 py-6">
-        {error && (
-          <div className="max-w-2xl mx-auto mb-4">
-            <div className="text-center text-destructive text-sm bg-destructive/10 rounded-lg py-2 px-4">
-              {error}
+              <div ref={messagesEndRef} />
             </div>
           </div>
-        )}
 
-        <div className="max-w-2xl mx-auto">
-          {status === "idle" && (
-            <Button
-              onClick={connectWebSocket}
-              className="w-full btn-gradient py-6 text-lg rounded-xl"
-            >
-              开始面试
-            </Button>
-          )}
-
-          {status === "connecting" && (
-            <div className="text-center">
-              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              <p className="text-muted-foreground">正在连接面试官...</p>
-            </div>
-          )}
-
-          {status === "active" && (
-            <div className="flex flex-col items-center gap-6">
-              {/* 状态提示 */}
-              {isAISpeaking && (
-                <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-primary/20 text-primary">
-                  <div className="flex gap-0.5">
-                    {[...Array(4)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="w-1 bg-primary rounded-full wave-bar"
-                        style={{ animationDelay: `${i * 0.1}s` }}
-                      />
-                    ))}
+          {/* 底部控制区 */}
+          <div className="border-t border-border/50 bg-card/50 backdrop-blur-md px-4 py-6">
+            <div className="max-w-2xl mx-auto">
+              <div className="flex flex-col items-center gap-6">
+                {/* 状态提示 */}
+                {isAISpeaking && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-primary/20 text-primary">
+                    <div className="flex gap-0.5">
+                      {[...Array(4)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-1 bg-primary rounded-full wave-bar"
+                          style={{ animationDelay: `${i * 0.1}s` }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-sm">面试官正在说话...</span>
                   </div>
-                  <span className="text-sm">面试官正在说话...</span>
-                </div>
-              )}
-
-              {/* 录音控制按钮 */}
-              <div className="flex items-center gap-4">
-                {!isRecording ? (
-                  <Button
-                    onClick={startRecording}
-                    disabled={isAISpeaking}
-                    className="px-8 py-6 text-lg rounded-xl btn-gradient disabled:opacity-50"
-                  >
-                    {isAISpeaking ? "⏳ 等待面试官说完..." : "🎤 点击开始回答"}
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={stopRecording}
-                    className="px-8 py-6 text-lg rounded-xl bg-green-600 hover:bg-green-700 text-white animate-pulse"
-                  >
-                    ✅ 回答完毕
-                  </Button>
                 )}
+
+                {/* 录音控制按钮 */}
+                <div className="flex items-center gap-4">
+                  {!isRecording ? (
+                    <Button
+                      onClick={startRecording}
+                      disabled={isAISpeaking}
+                      className="px-8 py-6 text-lg rounded-xl btn-gradient disabled:opacity-50"
+                    >
+                      {isAISpeaking ? "⏳ 等待面试官说完..." : "🎤 点击开始回答"}
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={stopRecording}
+                      className="px-8 py-6 text-lg rounded-xl bg-green-600 hover:bg-green-700 text-white animate-pulse"
+                    >
+                      ✅ 回答完毕
+                    </Button>
+                  )}
+                </div>
+
+                {isRecording && (
+                  <div className="flex items-center gap-2 text-green-500">
+                    <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+                    <span className="text-sm">正在录音... 说完请点击"回答完毕"</span>
+                  </div>
+                )}
+
+                {!isRecording && !isAISpeaking && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="text-sm">AI说完后会自动开始录音，你也可以手动点击开始</span>
+                  </div>
+                )}
+
+                {/* 结束面试按钮 */}
+                <Button
+                  variant="outline"
+                  onClick={endInterview}
+                  className="px-6 py-2 text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground rounded-xl"
+                >
+                  结束面试
+                </Button>
               </div>
-
-              {isRecording && (
-                <div className="flex items-center gap-2 text-green-500">
-                  <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-sm">正在录音... 说完请点击"回答完毕"</span>
-                </div>
-              )}
-
-              {!isRecording && !isAISpeaking && (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <span className="text-sm">AI说完后会自动开始录音，你也可以手动点击开始</span>
-                </div>
-              )}
-
-              {/* 结束面试按钮 */}
-              <Button
-                variant="outline"
-                onClick={endInterview}
-                className="px-6 py-2 text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground rounded-xl"
-              >
-                结束面试
-              </Button>
             </div>
-          )}
+          </div>
+        </>
+      )}
 
-          {status === "ending" && (
-            <div className="text-center">
-              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              <p className="text-muted-foreground">正在生成面试报告...</p>
-            </div>
-          )}
+      {/* 结束中状态 */}
+      {status === "ending" && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-muted-foreground">正在生成面试报告...</p>
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }
