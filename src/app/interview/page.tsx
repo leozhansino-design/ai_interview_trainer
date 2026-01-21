@@ -20,6 +20,10 @@ function InterviewContent() {
   const [isRecording, setIsRecording] = useState(false);
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingUserMessageId, setPendingUserMessageId] = useState<string | null>(null);
+  const [displayedText, setDisplayedText] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const fullTextRef = useRef("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
@@ -132,6 +136,17 @@ function InterviewContent() {
       recorderRef.current = null;
     }
     setIsRecording(false);
+
+    // 立即添加用户消息占位符，确保消息顺序正确
+    const messageId = Date.now().toString();
+    const placeholderMessage: Message = {
+      id: messageId,
+      role: "user",
+      content: "...",
+      timestamp: Date.now(),
+    };
+    setMessages((prev) => [...prev, placeholderMessage]);
+    setPendingUserMessageId(messageId);
 
     // 提交音频缓冲区
     const commitMsg = { type: "input_audio_buffer.commit" };
@@ -275,21 +290,40 @@ function InterviewContent() {
         break;
 
       case "response.audio_transcript.delta":
-        setCurrentTranscript((prev) => prev + (data.delta || ""));
+        // 缓存文本，不直接显示
+        fullTextRef.current += (data.delta || "");
         break;
 
       case "response.audio_transcript.done":
-        // AI 说完一句话
+        // AI 说完一句话，开始流畅打字效果
         console.log("[AI说完]", data.transcript);
         if (data.transcript) {
-          const newMessage: Message = {
-            id: Date.now().toString(),
-            role: "assistant",
-            content: data.transcript,
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [...prev, newMessage]);
+          setIsTyping(true);
+          setDisplayedText("");
           setCurrentTranscript("");
+          const text = data.transcript;
+          let index = 0;
+
+          const typeInterval = setInterval(() => {
+            if (index < text.length) {
+              const charsToAdd = Math.min(3, text.length - index);
+              setDisplayedText(text.slice(0, index + charsToAdd));
+              index += charsToAdd;
+            } else {
+              clearInterval(typeInterval);
+              setIsTyping(false);
+              const newMessage: Message = {
+                id: Date.now().toString(),
+                role: "assistant",
+                content: text,
+                timestamp: Date.now(),
+              };
+              setMessages((prev) => [...prev, newMessage]);
+              setDisplayedText("");
+            }
+          }, 30);
+
+          fullTextRef.current = "";
         }
         break;
 
@@ -304,16 +338,19 @@ function InterviewContent() {
         break;
 
       case "conversation.item.input_audio_transcription.completed":
-        // 用户说完话，转录完成
+        // 用户语音转录完成，更新占位消息
         console.log("[用户说完]", data.transcript);
         if (data.transcript) {
-          const newMessage: Message = {
-            id: Date.now().toString(),
-            role: "user",
-            content: data.transcript,
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [...prev, newMessage]);
+          setMessages((prev) => {
+            const updated = prev.map((msg) => {
+              if (msg.id === pendingUserMessageId || (msg.role === "user" && msg.content === "...")) {
+                return { ...msg, content: data.transcript };
+              }
+              return msg;
+            });
+            return updated;
+          });
+          setPendingUserMessageId(null);
         }
         break;
 
@@ -464,10 +501,30 @@ function InterviewContent() {
           {messages.map((msg) => (
             <div
               key={msg.id}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} items-start gap-3`}
             >
+              {/* AI头像 */}
+              {msg.role === "assistant" && (
+                <div className="flex-shrink-0 relative">
+                  <div className="absolute inset-0 w-10 h-10 rounded-full bg-blue-500/20 scale-150" />
+                  <div className="absolute inset-0 w-10 h-10 rounded-full bg-blue-500/10 scale-[1.8]" />
+                  <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg">
+                    <div className="flex items-center justify-center gap-[2px]">
+                      {[...Array(5)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-[2px] bg-white rounded-full"
+                          style={{
+                            height: i === 2 ? '14px' : i === 1 || i === 3 ? '10px' : '6px',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div
-                className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm ${
+                className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm ${
                   msg.role === "user"
                     ? "bg-primary text-primary-foreground rounded-br-md"
                     : "bg-card border border-border rounded-bl-md"
@@ -478,12 +535,40 @@ function InterviewContent() {
             </div>
           ))}
 
-          {/* AI 正在说的内容 */}
-          {currentTranscript && (
-            <div className="flex justify-start">
-              <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-bl-md text-sm bg-card border border-border">
-                {currentTranscript}
-                <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse" />
+          {/* AI 正在说话或打字中 */}
+          {(isAISpeaking || isTyping) && (
+            <div className="flex justify-start items-start gap-3">
+              {/* AI头像带声波动画 */}
+              <div className="flex-shrink-0 relative">
+                <div className={`absolute inset-0 w-10 h-10 rounded-full bg-blue-500/20 scale-150 ${isAISpeaking ? 'animate-pulse' : ''}`} />
+                <div className={`absolute inset-0 w-10 h-10 rounded-full bg-blue-500/10 scale-[1.8] ${isAISpeaking ? 'animate-pulse' : ''}`} />
+                <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                  <div className="flex items-center justify-center gap-[2px]">
+                    {[...Array(5)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="w-[2px] bg-white rounded-full transition-all duration-150"
+                        style={{
+                          height: isAISpeaking
+                            ? `${6 + Math.random() * 10}px`
+                            : i === 2 ? '14px' : i === 1 || i === 3 ? '10px' : '6px',
+                          animation: isAISpeaking ? `soundwave 0.4s ease-in-out infinite` : 'none',
+                          animationDelay: `${i * 0.08}s`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="max-w-[75%] px-4 py-3 rounded-2xl rounded-bl-md text-sm bg-card border border-border">
+                {isTyping && displayedText ? (
+                  <>
+                    {displayedText}
+                    <span className="animate-pulse ml-0.5">|</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">正在思考...</span>
+                )}
               </div>
             </div>
           )}

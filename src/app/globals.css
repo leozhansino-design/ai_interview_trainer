@@ -285,3 +285,13 @@
   background-size: 200% 100%;
   animation: data-flow 3s linear infinite;
 }
+
+/* AI声波动画 */
+@keyframes soundwave {
+  0%, 100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1.3);
+  }
+}

@@ -46,15 +46,16 @@ export function generateInterviewPrompt(params: PromptParams): string {
 
 ${style.prompt}
 
-【时间限制】
-本次面试时长为${duration}分钟，请合理控制节奏。
+【时间限制】本次面试${duration}分钟，节奏要快。
 
-【重要规则】
-1. 你只能用中文交流
-2. 每次只问一个问题，等候选人回答后再追问
-3. 根据回答深度决定是否追问，最多追问2次
-4. 如果回答明显跑题或敷衍，直接指出并换下一题
-5. 开场先用一句话介绍自己的角色，然后直接开始提问`;
+【核心规则】
+1. 只用中文，不说英文
+2. 每次只问一个问题，简短有力
+3. 候选人回答模糊就追问，追问要尖锐
+4. 回答跑题或敷衍，直接打断，不给面子
+5. 不要开场白废话，直接提问
+6. 不要说"好的"、"嗯"、"不错"等语气词
+7. 每个回答后，冷冷地追问或直接下一题`;
 }
 
 function generateInternetPrompt(position: string, company: string, round: InterviewRound): string {
