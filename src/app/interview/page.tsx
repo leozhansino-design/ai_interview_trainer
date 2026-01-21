@@ -170,12 +170,32 @@ function InterviewContent() {
     wsRef.current.send(JSON.stringify(responseMsg));
   }, [isRecording]);
 
+  // 检查麦克风权限
+  const checkMicrophonePermission = async (): Promise<boolean> => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 立即停止，只是检查权限
+      stream.getTracks().forEach(track => track.stop());
+      return true;
+    } catch (err) {
+      console.error("[权限] 麦克风权限被拒绝:", err);
+      return false;
+    }
+  };
+
   // 连接 WebSocket
   const connectWebSocket = useCallback(async () => {
     if (!settings) return;
 
-    setStatus("connecting");
+    // 先检查麦克风权限
     setError(null);
+    const hasMicPermission = await checkMicrophonePermission();
+    if (!hasMicPermission) {
+      setError("需要麦克风权限才能进行面试，请在浏览器中允许麦克风访问");
+      return;
+    }
+
+    setStatus("connecting");
 
     try {
       // 初始化音频播放器
